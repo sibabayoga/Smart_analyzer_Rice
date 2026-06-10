@@ -122,17 +122,3 @@ smart_rice_quality_analyzer/
 4. Deploy! (gratis)
 
 ---
-
-## 👥 Anggota Kelompok
-
-| Nama | NIM |
-|---|---|
-| Nurendra Bagaskara | 103012300108 |
-| Rayhan Yoga Edy Pratama | 103012300123 |
-
----
-
-## 📄 Lisensi
-
-Project ini dibuat untuk keperluan akademik — Mata Kuliah Pengolahan Citra Digital, Universitas Telkom 2026.
-"# Smart_analyzer_Rice" 

@@ -346,10 +346,15 @@ data/kaggle/          ← isi path ini di bawah
                             for e in result["errors"][:20]:
                                 st.caption(e)
 
-                    # Tawarkan retrain langsung
-                    st.divider()
-                    if st.button("🔁 Retrain Model Sekarang", type="secondary"):
-                        _do_retrain(clf)
+                    # Auto-retrain secara langsung jika dataset siap
+                    new_stats = get_dataset_stats(CSV_PATH)
+                    if new_stats.get("ready"):
+                        st.divider()
+                        with st.spinner("Melatih ulang model secara otomatis..."):
+                            retrain_res = clf.retrain_from_csv(CSV_PATH)
+                        if retrain_res["success"]:
+                            st.success("🔁 Model berhasil dilatih ulang secara otomatis menggunakan data real terbaru!")
+                            st.rerun()
                 else:
                     st.error("❌ Tidak ada gambar yang berhasil diproses.")
                     if result["errors"]:
@@ -461,10 +466,13 @@ data/kaggle/          ← isi path ini di bawah
                 new_stats = get_dataset_stats(CSV_PATH)
                 st.info(f"Total dataset sekarang: **{new_stats['total']} sampel**")
 
-                # Tawarkan retrain
+                # Latih ulang secara otomatis jika siap
                 if new_stats.get("ready"):
-                    if st.button("🔁 Retrain Model dari Data Baru", key="retrain_manual"):
-                        _do_retrain(clf)
+                    with st.spinner("Melatih ulang model secara otomatis..."):
+                        retrain_res = clf.retrain_from_csv(CSV_PATH)
+                    if retrain_res["success"]:
+                        st.success("🔁 Model berhasil dilatih ulang secara otomatis menggunakan data real terbaru!")
+                        st.rerun()
 
     # ════════════════ TAB 3: KELOLA DATASET ════════════════
     with tab_manage:
@@ -738,6 +746,12 @@ def _show_how_it_works():
 # ════════════════════════════════════════════════════════════════════════════
 def main():
     clf = load_classifier()
+
+    # Auto-retrain jika model masih synthetic tapi CSV sudah siap
+    if clf.get_training_info()["data_source"] == "synthetic":
+        stats = get_dataset_stats(CSV_PATH)
+        if stats.get("ready"):
+            clf.retrain_from_csv(CSV_PATH)
 
     # ── Sidebar ──────────────────────────────────────────────────────────────
     with st.sidebar:

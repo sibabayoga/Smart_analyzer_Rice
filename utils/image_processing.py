@@ -242,25 +242,91 @@ def grains_to_feature_array(grains: list[GrainFeatures]) -> np.ndarray:
 
 
 # ─────────────────────────────────────────────
+# Pemisah butir menempel (Watershed)
+# ─────────────────────────────────────────────
+def separate_touching_grains(
+    binary: np.ndarray,
+    original_bgr: np.ndarray,
+    threshold_ratio: float = 0.40,
+) -> np.ndarray:
+    """
+    Memisahkan butir beras yang menempel menggunakan kombinasi Distance Transform
+    dan segmentasi Watershed.
+    """
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    
+    # 1. Tentukan sure background dengan dilasi
+    sure_bg = cv2.dilate(binary, kernel, iterations=2)
+    
+    # 2. Distance Transform untuk mengukur jarak ke background
+    dist_transform = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+    max_dist = dist_transform.max()
+    if max_dist == 0:
+        return binary.copy()
+        
+    # 3. Thresholding untuk mencari sure foreground (pusat butir/peak)
+    _, sure_fg = cv2.threshold(dist_transform, threshold_ratio * max_dist, 255, 0)
+    sure_fg = np.uint8(sure_fg)
+    
+    # 4. Cari area perbatasan (unknown) yang saling berhimpit
+    unknown = cv2.subtract(sure_bg, sure_fg)
+    
+    # 5. Labeling objek/markers
+    _, markers = cv2.connectedComponents(sure_fg)
+    
+    # Naikkan 1 nilai agar background bernilai 1 (bukan 0)
+    markers = markers + 1
+    # Tandai area perbatasan tidak dikenal dengan 0
+    markers[unknown == 255] = 0
+    
+    # 6. Jalankan Watershed
+    markers = np.int32(markers)
+    markers = cv2.watershed(original_bgr, markers)
+    
+    # 7. Gambar garis pembatas (markers == -1) dengan warna hitam (0) di mask
+    result = binary.copy()
+    result[markers == -1] = 0
+    
+    # Bersihkan sisa jembatan kecil dengan opening ringan
+    result = cv2.morphologyEx(result, cv2.MORPH_OPEN, kernel, iterations=1)
+    
+    return result
+
+
+# ─────────────────────────────────────────────
 # Full pipeline (single entry point)
 # ─────────────────────────────────────────────
-def run_pipeline(image_bgr: np.ndarray) -> dict:
+def run_pipeline(
+    image_bgr: np.ndarray,
+    use_watershed: bool = False,
+    watershed_threshold: float = 0.40,
+) -> dict:
     """
     Jalankan seluruh pipeline dan kembalikan semua hasil.
     """
     pre   = preprocess(image_bgr)
     seg   = segment(pre["enhanced"])
     morph = morphology(seg["binary"])
+    
+    binary_for_contours = morph["morphed"]
+    if use_watershed:
+        binary_for_contours = separate_touching_grains(
+            binary_for_contours,
+            pre["original_bgr"],
+            threshold_ratio=watershed_threshold,
+        )
+        
     grains = extract_features(
-        morph["morphed"], pre["original_bgr"], pre["gray"]
+        binary_for_contours, pre["original_bgr"], pre["gray"]
     )
     grains = label_grains_rule_based(grains)
     annotated = draw_annotated(pre["original_bgr"], grains)
-
+ 
     return {
         **pre,
         **seg,
         **morph,
+        "morphed_separated": binary_for_contours,
         "grains": grains,
         "annotated": annotated,
         "feature_array": grains_to_feature_array(grains),

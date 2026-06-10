@@ -532,7 +532,8 @@ def _do_retrain(clf: RiceClassifier):
 # ════════════════════════════════════════════════════════════════════════════
 #  PAGE: ANALISIS UTAMA
 # ════════════════════════════════════════════════════════════════════════════
-def page_analyze(clf: RiceClassifier, method: str, min_area: int, max_area: int):
+def page_analyze(clf: RiceClassifier, method: str, min_area: int, max_area: int,
+                 use_watershed: bool = False, watershed_threshold: float = 0.40):
     # ── Header ──────────────────────────────────────────────────────────────
     st.markdown("""
     <div class="main-header">
@@ -580,7 +581,11 @@ def page_analyze(clf: RiceClassifier, method: str, min_area: int, max_area: int)
     bgr = pil_to_bgr(uploaded)
 
     with st.spinner("🔄 Memproses citra..."):
-        result = run_pipeline(bgr)
+        result = run_pipeline(
+            bgr,
+            use_watershed=use_watershed,
+            watershed_threshold=watershed_threshold,
+        )
         result["grains"] = [g for g in result["grains"]
                             if g.area >= min_area and g.area <= max_area]
 
@@ -667,7 +672,11 @@ def page_analyze(clf: RiceClassifier, method: str, min_area: int, max_area: int)
 
     with tab_pipeline:
         st.markdown("**Tahapan preprocessing citra:**")
-        p1, p2, p3, p4 = st.columns(4)
+        if use_watershed:
+            p1, p2, p3, p4, p5 = st.columns(5)
+        else:
+            p1, p2, p3, p4 = st.columns(4)
+            
         with p1:
             st.image(result["gray"],    caption="1. Grayscale",       use_container_width=True, clamp=True)
         with p2:
@@ -676,6 +685,9 @@ def page_analyze(clf: RiceClassifier, method: str, min_area: int, max_area: int)
             st.image(result["binary"],  caption="3. Otsu Threshold",  use_container_width=True, clamp=True)
         with p4:
             st.image(result["morphed"], caption="4. Morfologi",       use_container_width=True, clamp=True)
+        if use_watershed:
+            with p5:
+                st.image(result["morphed_separated"], caption="5. Pemisah Watershed", use_container_width=True, clamp=True)
 
     with tab_fitur:
         if grains:
@@ -780,6 +792,22 @@ def main():
             max_area    = st.slider("Max Area Butir (px²)", 5000, 80000, 50000, 1000)
 
             st.divider()
+            st.subheader("💧 Pemisah Butir Menempel")
+            use_watershed = st.toggle(
+                "Pemisah Butir (Watershed)",
+                value=True,
+                help="Pisahkan butir beras yang saling menempel agar dideteksi secara individual."
+            )
+            if use_watershed:
+                watershed_threshold = st.slider(
+                    "Sensitivitas Pemisah",
+                    0.10, 0.90, 0.40, 0.05,
+                    help="Makin tinggi = makin agresif memotong butir menempel."
+                )
+            else:
+                watershed_threshold = 0.40
+
+            st.divider()
             st.subheader("ℹ️ Legenda Warna")
             st.markdown("""
             🟢 **Hijau** — Butir Utuh  
@@ -790,13 +818,15 @@ def main():
             method   = "svm"
             min_area = 300
             max_area = 50000
+            use_watershed = True
+            watershed_threshold = 0.40
 
         st.divider()
         st.caption("Universitas Telkom · Informatika · 2026")
 
     # ── Route halaman ─────────────────────────────────────────────────────────
     if page == "🔍 Analisis Beras":
-        page_analyze(clf, method, min_area, max_area)
+        page_analyze(clf, method, min_area, max_area, use_watershed, watershed_threshold)
     else:
         page_training_data(clf)
 

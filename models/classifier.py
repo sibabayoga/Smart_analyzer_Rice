@@ -1,10 +1,18 @@
 """
 models/classifier.py
 KNN dan SVM classifier untuk klasifikasi butir beras.
-Menggunakan synthetic training data berbasis rule-based labeling dari proposal.
+
+Prioritas training data:
+  1. File CSV real data (data/training_data.csv) — jika ada & cukup
+  2. Synthetic data sebagai fallback
+
+Support retrain dari luar (dipanggil dari UI Streamlit).
 """
 
+import os
 import numpy as np
+import pandas as pd
+from pathlib import Path
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
@@ -14,13 +22,19 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-# Label encoding
+# ── Label encoding ────────────────────────────────────────────
 LABEL_MAP    = {"whole": 0, "broken": 1, "impurity": 2}
 LABEL_DECODE = {0: "whole", 1: "broken", 2: "impurity"}
 
+# ── Path default CSV ──────────────────────────────────────────
+_DEFAULT_CSV = Path(__file__).parent.parent / "data" / "training_data.csv"
+
+# Minimum sampel per kelas agar CSV dianggap "cukup"
+MIN_SAMPLES_PER_CLASS = 10
+
+
 # ─────────────────────────────────────────────
-# Synthetic training data generator
-# Dibuat berdasarkan karakteristik geometris dari literatur
+# Synthetic training data (fallback)
 # ─────────────────────────────────────────────
 def _generate_training_data(n_per_class: int = 300, seed: int = 42) -> tuple:
     """
@@ -68,7 +82,67 @@ def _generate_training_data(n_per_class: int = 300, seed: int = 42) -> tuple:
 
 
 # ─────────────────────────────────────────────
-# Build & train models
+# Load data dari CSV
+# ─────────────────────────────────────────────
+def _load_csv_data(csv_path: Path) -> tuple[np.ndarray, np.ndarray] | None:
+    """
+    Load fitur dari CSV training data.
+    Return (X, y) numpy arrays, atau None jika tidak memenuhi syarat.
+
+    Kolom CSV yang dipakai: area, perimeter, aspect_ratio, extent, solidity
+    (color_mean dikecualikan supaya konsisten dengan fitur dari run_pipeline)
+    """
+    if not csv_path.exists():
+        return None
+
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception:
+        return None
+
+    # Validasi kolom
+    required = ["area", "perimeter", "aspect_ratio", "extent", "solidity", "label"]
+    if not all(c in df.columns for c in required):
+        return None
+
+    # Filter label valid saja
+    df = df[df["label"].isin(LABEL_MAP.keys())].copy()
+
+    # Cek kecukupan sampel per kelas
+    for lbl in LABEL_MAP:
+        if df[df["label"] == lbl].shape[0] < MIN_SAMPLES_PER_CLASS:
+            return None  # Belum cukup → pakai synthetic
+
+    feat_cols = ["area", "perimeter", "aspect_ratio", "extent", "solidity"]
+    X = df[feat_cols].values.astype(np.float32)
+    y = df["label"].map(LABEL_MAP).values.astype(int)
+
+    return X, y
+
+
+def get_data_source(csv_path: Path | None = None) -> str:
+    """
+    Return string sumber data yang digunakan: 'csv_real' atau 'synthetic'.
+    Berguna untuk ditampilkan di UI.
+    """
+    path = csv_path or _DEFAULT_CSV
+    result = _load_csv_data(path)
+    if result is None:
+        return "synthetic"
+    X, y = result
+    # Cek apakah ada data non-synthetic (source != synthetic)
+    try:
+        df = pd.read_csv(path)
+        if "source" in df.columns:
+            non_synth = df[df["source"] != "synthetic"]
+            return "csv_real" if len(non_synth) >= MIN_SAMPLES_PER_CLASS * 3 else "synthetic"
+    except Exception:
+        pass
+    return "csv_real"
+
+
+# ─────────────────────────────────────────────
+# Build model pipelines
 # ─────────────────────────────────────────────
 def build_knn(n_neighbors: int = 5) -> Pipeline:
     return Pipeline([
@@ -83,33 +157,105 @@ def build_svm(C: float = 1.0, kernel: str = "rbf") -> Pipeline:
     ])
 
 
+# ─────────────────────────────────────────────
+# RiceClassifier
+# ─────────────────────────────────────────────
 class RiceClassifier:
     """
     Wrapper yang menyimpan KNN dan SVM, keduanya dilatih saat init.
+
+    Prioritas data:
+      1. CSV di data/training_data.csv (jika ada >= MIN_SAMPLES_PER_CLASS per kelas)
+      2. Synthetic data sebagai fallback
+
     Bisa dipakai untuk prediksi per-butir maupun batch.
+    Mendukung retrain via retrain_from_csv() — dipanggil dari UI.
     """
 
-    def __init__(self, knn_k: int = 5, svm_C: float = 1.0, svm_kernel: str = "rbf"):
+    def __init__(self, knn_k: int = 5, svm_C: float = 1.0, svm_kernel: str = "rbf",
+                 csv_path: str | None = None):
         self.knn_k      = knn_k
         self.svm_C      = svm_C
         self.svm_kernel = svm_kernel
+        self.csv_path   = Path(csv_path) if csv_path else _DEFAULT_CSV
 
         self._knn: Pipeline | None = None
         self._svm: Pipeline | None = None
-        self._trained = False
+        self._trained       = False
+        self._data_source   = "synthetic"   # 'synthetic' atau 'csv_real'
+        self._n_samples     = 0
+        self._n_per_class   = {}
 
         # Langsung train saat init
         self._train()
 
-    def _train(self):
-        X, y = _generate_training_data()
+    def _train(self, X: np.ndarray | None = None, y: np.ndarray | None = None):
+        """
+        Internal training. Jika X, y disediakan → pakai itu.
+        Jika tidak → coba load CSV → fallback synthetic.
+        """
+        if X is None or y is None:
+            csv_data = _load_csv_data(self.csv_path)
+            if csv_data is not None:
+                X, y = csv_data
+                self._data_source = "csv_real"
+            else:
+                X, y = _generate_training_data()
+                self._data_source = "synthetic"
+        else:
+            self._data_source = "csv_real"
 
         self._knn = build_knn(self.knn_k)
         self._svm = build_svm(self.svm_C, self.svm_kernel)
-
         self._knn.fit(X, y)
         self._svm.fit(X, y)
-        self._trained = True
+        self._trained     = True
+        self._n_samples   = len(y)
+        self._n_per_class = {
+            LABEL_DECODE[lbl]: int(np.sum(y == lbl))
+            for lbl in LABEL_DECODE
+        }
+
+    def retrain_from_csv(self, csv_path: str | None = None) -> dict:
+        """
+        Retrain model dari CSV terbaru.
+        Dipanggil dari UI Streamlit setelah labeling manual / import Kaggle.
+
+        Returns:
+            dict dengan info training: data_source, n_samples, n_per_class, success
+        """
+        path = Path(csv_path) if csv_path else self.csv_path
+        csv_data = _load_csv_data(path)
+        if csv_data is not None:
+            X, y = csv_data
+            self._train(X, y)
+            return {
+                "success":      True,
+                "data_source":  self._data_source,
+                "n_samples":    self._n_samples,
+                "n_per_class":  self._n_per_class,
+                "message":      f"✅ Model dilatih ulang dari {self._n_samples} sampel real data.",
+            }
+        else:
+            # Fallback synthetic
+            self._train()
+            return {
+                "success":      False,
+                "data_source":  "synthetic",
+                "n_samples":    self._n_samples,
+                "n_per_class":  self._n_per_class,
+                "message":      f"⚠️ Data CSV belum cukup (min {MIN_SAMPLES_PER_CLASS} per kelas). "
+                                f"Menggunakan synthetic data.",
+            }
+
+    def get_training_info(self) -> dict:
+        """Return informasi singkat tentang data training yang dipakai."""
+        return {
+            "data_source":  self._data_source,
+            "n_samples":    self._n_samples,
+            "n_per_class":  self._n_per_class,
+            "csv_path":     str(self.csv_path),
+        }
 
     def predict(
         self,
@@ -134,15 +280,26 @@ class RiceClassifier:
         return labels, proba
 
     def cv_scores(self, method: str = "svm", cv: int = 5) -> dict:
-        """Cross-validation score pada synthetic data (untuk tampil di UI)."""
-        X, y = _generate_training_data()
+        """
+        Cross-validation score pada data yang dipakai (CSV atau synthetic).
+        Untuk ditampilkan di UI.
+        """
+        csv_data = _load_csv_data(self.csv_path)
+        if csv_data is not None:
+            X, y = csv_data
+            label = "real data"
+        else:
+            X, y = _generate_training_data()
+            label = "synthetic data"
+
         model = build_svm(self.svm_C, self.svm_kernel) if method == "svm" \
                 else build_knn(self.knn_k)
         scores = cross_val_score(model, X, y, cv=cv, scoring="accuracy")
         return {
-            "mean":   float(scores.mean()),
-            "std":    float(scores.std()),
-            "scores": scores.tolist(),
+            "mean":       float(scores.mean()),
+            "std":        float(scores.std()),
+            "scores":     scores.tolist(),
+            "data_label": label,
         }
 
 

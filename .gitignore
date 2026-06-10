@@ -47,3 +47,10 @@ assets/test_images/
 *.jpeg
 *.png
 !assets/.gitkeep
+
+# Dataset folder (Kaggle images — jangan di-commit, terlalu besar)
+data/kaggle/
+data/*.zip
+
+# Tapi training_data.csv boleh di-commit (fitur, bukan gambar)
+# data/training_data.csv → tidak di-ignore

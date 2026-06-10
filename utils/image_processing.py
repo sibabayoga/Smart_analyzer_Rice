@@ -247,31 +247,36 @@ def grains_to_feature_array(grains: list[GrainFeatures]) -> np.ndarray:
 def separate_touching_grains(
     binary: np.ndarray,
     original_bgr: np.ndarray,
-    threshold_ratio: float = 0.40,
+    min_dist: float = 3.0,
+    dilate_size: int = 15,
 ) -> np.ndarray:
     """
-    Memisahkan butir beras yang menempel menggunakan kombinasi Distance Transform
-    dan segmentasi Watershed.
+    Memisahkan butir beras yang menempel menggunakan kombinasi Distance Transform,
+    Gaussian smoothing, local maxima detection via dilation, dan segmentasi Watershed.
     """
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     
     # 1. Tentukan sure background dengan dilasi
     sure_bg = cv2.dilate(binary, kernel, iterations=2)
     
-    # 2. Distance Transform untuk mengukur jarak ke background
+    # 2. Distance Transform
     dist_transform = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
-    max_dist = dist_transform.max()
-    if max_dist == 0:
-        return binary.copy()
-        
-    # 3. Thresholding untuk mencari sure foreground (pusat butir/peak)
-    _, sure_fg = cv2.threshold(dist_transform, threshold_ratio * max_dist, 255, 0)
-    sure_fg = np.uint8(sure_fg)
     
-    # 4. Cari area perbatasan (unknown) yang saling berhimpit
+    # 3. Smooth distance transform untuk meredam noise lokal kecil
+    dist_smooth = cv2.GaussianBlur(dist_transform, (5, 5), 0)
+    
+    # 4. Cari peak lokal (local maxima) dengan dilasi berkelompok sesuai perkiraan lebar butir
+    dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilate_size, dilate_size))
+    local_max = cv2.dilate(dist_smooth, dilate_kernel)
+    
+    # 5. Sure foreground: pixel yang sama dengan nilai lokal maksimum dan di atas batas jarak minimal
+    sure_fg = (dist_smooth == local_max) & (dist_transform > min_dist)
+    sure_fg = np.uint8(sure_fg) * 255
+    
+    # 6. Cari area perbatasan (unknown)
     unknown = cv2.subtract(sure_bg, sure_fg)
     
-    # 5. Labeling objek/markers
+    # 7. Labeling objek/markers
     _, markers = cv2.connectedComponents(sure_fg)
     
     # Naikkan 1 nilai agar background bernilai 1 (bukan 0)
@@ -279,11 +284,11 @@ def separate_touching_grains(
     # Tandai area perbatasan tidak dikenal dengan 0
     markers[unknown == 255] = 0
     
-    # 6. Jalankan Watershed
+    # 8. Jalankan Watershed
     markers = np.int32(markers)
     markers = cv2.watershed(original_bgr, markers)
     
-    # 7. Gambar garis pembatas (markers == -1) dengan warna hitam (0) di mask
+    # 9. Gambar garis pembatas (markers == -1) dengan warna hitam (0) di mask
     result = binary.copy()
     result[markers == -1] = 0
     
@@ -299,7 +304,8 @@ def separate_touching_grains(
 def run_pipeline(
     image_bgr: np.ndarray,
     use_watershed: bool = False,
-    watershed_threshold: float = 0.40,
+    min_dist: float = 3.0,
+    dilate_size: int = 15,
 ) -> dict:
     """
     Jalankan seluruh pipeline dan kembalikan semua hasil.
@@ -313,7 +319,8 @@ def run_pipeline(
         binary_for_contours = separate_touching_grains(
             binary_for_contours,
             pre["original_bgr"],
-            threshold_ratio=watershed_threshold,
+            min_dist=min_dist,
+            dilate_size=dilate_size,
         )
         
     grains = extract_features(

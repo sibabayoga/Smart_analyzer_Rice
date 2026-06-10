@@ -533,7 +533,7 @@ def _do_retrain(clf: RiceClassifier):
 #  PAGE: ANALISIS UTAMA
 # ════════════════════════════════════════════════════════════════════════════
 def page_analyze(clf: RiceClassifier, method: str, min_area: int, max_area: int,
-                 use_watershed: bool = False, watershed_threshold: float = 0.40):
+                 use_watershed: bool = False, min_dist: float = 3.0, dilate_size: int = 15):
     # ── Header ──────────────────────────────────────────────────────────────
     st.markdown("""
     <div class="main-header">
@@ -584,7 +584,8 @@ def page_analyze(clf: RiceClassifier, method: str, min_area: int, max_area: int,
         result = run_pipeline(
             bgr,
             use_watershed=use_watershed,
-            watershed_threshold=watershed_threshold,
+            min_dist=min_dist,
+            dilate_size=dilate_size,
         )
         result["grains"] = [g for g in result["grains"]
                             if g.area >= min_area and g.area <= max_area]
@@ -791,7 +792,6 @@ def main():
             min_area    = st.slider("Min Area Butir (px²)", 100, 1000, 300, 50)
             max_area    = st.slider("Max Area Butir (px²)", 5000, 80000, 50000, 1000)
 
-            st.divider()
             st.subheader("💧 Pemisah Butir Menempel")
             use_watershed = st.toggle(
                 "Pemisah Butir (Watershed)",
@@ -799,13 +799,19 @@ def main():
                 help="Pisahkan butir beras yang saling menempel agar dideteksi secara individual."
             )
             if use_watershed:
-                watershed_threshold = st.slider(
-                    "Sensitivitas Pemisah",
-                    0.10, 0.90, 0.40, 0.05,
-                    help="Makin tinggi = makin agresif memotong butir menempel."
+                min_dist = st.slider(
+                    "Batas Jarak Minimum (px)",
+                    1.0, 15.0, 3.0, 0.5,
+                    help="Jarak minimum pusat butir ke background. Nilai kecil = deteksi butir kecil, nilai besar = kurangi noise/plateau."
+                )
+                dilate_size = st.slider(
+                    "Perkiraan Lebar Butir (px)",
+                    3, 31, 15, 2,
+                    help="Lebar masker pencari titik pusat (harus ganjil). Nilai besar = cegah butir terbelah dua. Nilai kecil = pisahkan butir rapat."
                 )
             else:
-                watershed_threshold = 0.40
+                min_dist = 3.0
+                dilate_size = 15
 
             st.divider()
             st.subheader("ℹ️ Legenda Warna")
@@ -819,14 +825,15 @@ def main():
             min_area = 300
             max_area = 50000
             use_watershed = True
-            watershed_threshold = 0.40
+            min_dist = 3.0
+            dilate_size = 15
 
         st.divider()
         st.caption("Universitas Telkom · Informatika · 2026")
 
     # ── Route halaman ─────────────────────────────────────────────────────────
     if page == "🔍 Analisis Beras":
-        page_analyze(clf, method, min_area, max_area, use_watershed, watershed_threshold)
+        page_analyze(clf, method, min_area, max_area, use_watershed, min_dist, dilate_size)
     else:
         page_training_data(clf)
 

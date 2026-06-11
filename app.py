@@ -587,9 +587,6 @@ def page_analyze(clf: RiceClassifier, method: str, min_area: int, max_area: int,
             min_dist=min_dist,
             dilate_size=dilate_size,
         )
-        result["grains"] = [g for g in result["grains"]
-                            if g.area >= min_area and g.area <= max_area]
-
         grains = result["grains"]
         feats  = np.array([[g.area, g.perimeter, g.aspect_ratio, g.extent, g.solidity]
                            for g in grains], dtype=np.float32)
@@ -789,8 +786,8 @@ def main():
 
             st.divider()
             st.subheader("📐 Parameter Pipeline")
-            min_area    = st.slider("Min Area Butir (px²)", 100, 1000, 300, 50)
-            max_area    = st.slider("Max Area Butir (px²)", 5000, 80000, 50000, 1000)
+            min_area    = st.slider("Min Area Butir (px²)", 100, 1000, 150, 50)
+            max_area    = st.slider("Batas Area Maksimal (px²)", 500, 10000, 1500, 100)
 
             st.subheader("💧 Pemisah Butir Menempel")
             use_watershed = st.toggle(
@@ -801,17 +798,17 @@ def main():
             if use_watershed:
                 min_dist = st.slider(
                     "Batas Jarak Minimum (px)",
-                    1.0, 15.0, 3.0, 0.5,
+                    1.0, 15.0, 1.5, 0.5,
                     help="Jarak minimum pusat butir ke background. Nilai kecil = deteksi butir kecil, nilai besar = kurangi noise/plateau."
                 )
                 dilate_size = st.slider(
                     "Perkiraan Lebar Butir (px)",
-                    3, 31, 15, 2,
+                    3, 31, 9, 2,
                     help="Lebar masker pencari titik pusat (harus ganjil). Nilai besar = cegah butir terbelah dua. Nilai kecil = pisahkan butir rapat."
                 )
             else:
-                min_dist = 3.0
-                dilate_size = 15
+                min_dist = 1.5
+                dilate_size = 9
 
             st.divider()
             st.subheader("ℹ️ Legenda Warna")
@@ -822,11 +819,11 @@ def main():
             """)
         else:
             method   = "svm"
-            min_area = 300
-            max_area = 50000
+            min_area = 150
+            max_area = 1500
             use_watershed = True
-            min_dist = 3.0
-            dilate_size = 15
+            min_dist = 1.5
+            dilate_size = 9
 
         st.divider()
         st.caption("Universitas Telkom · Informatika · 2026")
